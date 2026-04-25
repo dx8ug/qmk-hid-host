@@ -94,13 +94,27 @@ impl Keyboard {
                     }
 
                     tracing::info!("{}: connected", name);
+
+                    // Send immediate HELLO synchronously, before providers can race ahead.
+                    // Guarantees HELLO is the first packet queued for the writer thread.
+                    match host_to_device_sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
+                        Ok(_) => tracing::debug!("{}: HELLO sent", name),
+                        Err(e) => tracing::warn!("{}: HELLO send failed: {:?}", name, e),
+                    }
+
                     is_connected.store(true, Relaxed);
                     let _ = is_connected_sender.try_send(true);
-                    start_hello_pinger(&name, &is_connected, &host_to_device_sender);
+
+                    // Per-connection pinger lifetime flag — keeps each pinger thread bound to
+                    // its own connect cycle even if `is_connected` flips back to true on reconnect
+                    // before the old pinger wakes from its sleep.
+                    let pinger_alive = Arc::new(AtomicBool::new(true));
+                    start_hello_pinger(&name, &pinger_alive, &host_to_device_sender);
 
                     loop {
                         if !is_connected.load(Relaxed) {
                             tracing::warn!("{}: disconnected", name);
+                            pinger_alive.store(false, Relaxed);
                             let _ = is_connected_sender.try_send(false);
                             break;
                         }
@@ -157,21 +171,16 @@ fn start_read(name: &String, device: HidDevice, is_connected: &Arc<AtomicBool>, 
     });
 }
 
-fn start_hello_pinger(name: &String, is_connected: &Arc<AtomicBool>, host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
+fn start_hello_pinger(name: &String, pinger_alive: &Arc<AtomicBool>, host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
     let name = name.clone();
-    let is_connected = is_connected.clone();
+    let pinger_alive = pinger_alive.clone();
     let sender = host_to_device_sender.clone();
 
     std::thread::spawn(move || {
-        // immediate HELLO on connect
-        match sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
-            Ok(_) => tracing::debug!("{}: HELLO sent", name),
-            Err(e) => tracing::warn!("{}: HELLO send failed: {:?}", name, e),
-        }
-
+        // Immediate HELLO is sent synchronously by connect(); this thread sends only periodic PINGs.
         loop {
             std::thread::sleep(HELLO_INTERVAL);
-            if !is_connected.load(Relaxed) {
+            if !pinger_alive.load(Relaxed) {
                 break;
             }
             if let Err(e) = sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
