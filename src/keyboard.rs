@@ -10,6 +10,7 @@ use crate::data_type::DataType;
 
 const HELLO_INTERVAL: Duration = Duration::from_secs(30);
 const HELLO_PROTOCOL_VERSION: u8 = 0x01;
+const HELLO_PACKET: [u8; 2] = [DataType::HidHello as u8, HELLO_PROTOCOL_VERSION];
 
 pub struct Keyboard {
     name: String,
@@ -97,7 +98,7 @@ impl Keyboard {
 
                     // Send immediate HELLO synchronously, before providers can race ahead.
                     // Guarantees HELLO is the first packet queued for the writer thread.
-                    match host_to_device_sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
+                    match host_to_device_sender.send(HELLO_PACKET.to_vec()) {
                         Ok(_) => tracing::debug!("{}: HELLO sent", name),
                         Err(e) => tracing::warn!("{}: HELLO send failed: {:?}", name, e),
                     }
@@ -183,7 +184,7 @@ fn start_hello_pinger(name: &String, pinger_alive: &Arc<AtomicBool>, host_to_dev
             if !pinger_alive.load(Relaxed) {
                 break;
             }
-            if let Err(e) = sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
+            if let Err(e) = sender.send(HELLO_PACKET.to_vec()) {
                 tracing::error!("{}: hello ping send failed: {:?}", name, e);
                 break;
             }
