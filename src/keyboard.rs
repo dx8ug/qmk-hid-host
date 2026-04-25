@@ -1,11 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
+use std::time::Duration;
 
 use hidapi::{DeviceInfo, HidApi, HidDevice};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::config::Device;
 use crate::data_type::DataType;
+
+const HELLO_INTERVAL: Duration = Duration::from_secs(30);
+const HELLO_PROTOCOL_VERSION: u8 = 0x01;
 
 pub struct Keyboard {
     name: String,
@@ -92,6 +96,7 @@ impl Keyboard {
                     tracing::info!("{}: connected", name);
                     is_connected.store(true, Relaxed);
                     let _ = is_connected_sender.try_send(true);
+                    start_hello_pinger(&name, &is_connected, &host_to_device_sender);
 
                     loop {
                         if !is_connected.load(Relaxed) {
@@ -149,5 +154,31 @@ fn start_read(name: &String, device: HidDevice, is_connected: &Arc<AtomicBool>, 
             is_connected.store(false, Relaxed);
             break;
         }
+    });
+}
+
+fn start_hello_pinger(name: &String, is_connected: &Arc<AtomicBool>, host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
+    let name = name.clone();
+    let is_connected = is_connected.clone();
+    let sender = host_to_device_sender.clone();
+
+    std::thread::spawn(move || {
+        // immediate HELLO on connect
+        let _ = sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]);
+        tracing::debug!("{}: HELLO sent", name);
+
+        loop {
+            std::thread::sleep(HELLO_INTERVAL);
+            if !is_connected.load(Relaxed) {
+                break;
+            }
+            if let Err(e) = sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
+                tracing::error!("{}: hello ping send failed: {:?}", name, e);
+                break;
+            }
+            tracing::debug!("{}: PING sent", name);
+        }
+
+        tracing::debug!("{}: hello pinger stopped", name);
     });
 }

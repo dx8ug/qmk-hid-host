@@ -7,6 +7,8 @@ pub enum DataType {
     MediaArtist,
     MediaTitle,
 
+    HidHello = 0xBB, // host liveness ping, must match firmware
+
     RelayFromDevice = 0xCC,
     RelayToDevice,
 
@@ -21,6 +23,8 @@ pub enum DataType {
     Layout,
     Spotify = 0xAE,
     Weather = 0xAF,
+
+    HidHello = 0xBB, // host liveness ping, must match firmware
 
     RelayFromDevice = 0xCC,
     RelayToDevice,
