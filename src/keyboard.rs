@@ -164,8 +164,10 @@ fn start_hello_pinger(name: &String, is_connected: &Arc<AtomicBool>, host_to_dev
 
     std::thread::spawn(move || {
         // immediate HELLO on connect
-        let _ = sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]);
-        tracing::debug!("{}: HELLO sent", name);
+        match sender.send(vec![DataType::HidHello as u8, HELLO_PROTOCOL_VERSION]) {
+            Ok(_) => tracing::debug!("{}: HELLO sent", name),
+            Err(e) => tracing::warn!("{}: HELLO send failed: {:?}", name, e),
+        }
 
         loop {
             std::thread::sleep(HELLO_INTERVAL);
