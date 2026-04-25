@@ -2,6 +2,7 @@
   "devices": [
     {
       "name": "stront",
+      "vendorId": "0x0",
       "productId": "0x0844"
     }
   ],

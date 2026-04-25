@@ -9,6 +9,7 @@ use crate::data_type::DataType;
 
 pub struct Keyboard {
     name: String,
+    vendor_id: u16,
     product_id: u16,
     usage: u16,
     usage_page: u16,
@@ -20,6 +21,7 @@ impl Keyboard {
     pub fn new(device: &Device, reconnect_delay: u64) -> Self {
         return Self {
             name: device.name.clone().unwrap_or("keyboard".to_string()),
+            vendor_id: device.vendor_id,
             product_id: device.product_id,
             usage: device.usage.unwrap_or(0x61),
             usage_page: device.usage_page.unwrap_or(0xff60),
@@ -28,10 +30,14 @@ impl Keyboard {
         };
     }
 
-    fn get_device_info(hid_api: &HidApi, product_id: &u16, usage: &u16, usage_page: &u16) -> Option<DeviceInfo> {
+    fn get_device_info(hid_api: &HidApi, vendor_id: &u16, product_id: &u16, usage: &u16, usage_page: &u16) -> Option<DeviceInfo> {
         let devices = hid_api.device_list();
         for device_info in devices {
-            if device_info.product_id() == *product_id && device_info.usage() == *usage && device_info.usage_page() == *usage_page {
+            if (*vendor_id == 0 || device_info.vendor_id() == *vendor_id)
+                && (*product_id == 0 || device_info.product_id() == *product_id)
+                && device_info.usage() == *usage
+                && device_info.usage_page() == *usage_page
+            {
                 return Some(device_info.clone());
             }
         }
@@ -46,6 +52,7 @@ impl Keyboard {
         is_connected_sender: mpsc::Sender<bool>,
     ) {
         let name = self.name.clone();
+        let vid = self.vendor_id;
         let pid = self.product_id;
         let usage = self.usage;
         let usage_page = self.usage_page;
@@ -58,7 +65,7 @@ impl Keyboard {
                 tracing::debug!("{}: trying to connect...", name);
 
                 let hid_api = HidApi::new().unwrap();
-                if let Some(device_info) = Self::get_device_info(&hid_api, &pid, &usage, &usage_page) {
+                if let Some(device_info) = Self::get_device_info(&hid_api, &vid, &pid, &usage, &usage_page) {
                     let reconnect_timeout = 1000;
                     loop {
                         match device_info.open_device(&hid_api) {
