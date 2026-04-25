@@ -1,4 +1,5 @@
 pub mod _base;
+pub mod hid_kb_state;
 pub mod layout;
 pub mod media;
 pub mod relay;

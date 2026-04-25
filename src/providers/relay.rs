@@ -38,9 +38,12 @@ impl Provider for RelayProvider {
 
                 tracing::debug!("Relay Provider: waiting for data...");
                 if let Ok(mut data) = relay_subscriber.blocking_recv() {
-                    data[0] = DataType::RelayToDevice as u8;
-                    if let Err(e) = host_to_device_sender.send(data) {
-                        tracing::error!("Relay Provider failed to send data: {:?}", e);
+                    // Filter only RelayFromDevice data
+                    if !data.is_empty() && data[0] == DataType::RelayFromDevice as u8 {
+                        data[0] = DataType::RelayToDevice as u8;
+                        if let Err(e) = host_to_device_sender.send(data) {
+                            tracing::error!("Relay Provider failed to send data: {:?}", e);
+                        }
                     }
                 }
 

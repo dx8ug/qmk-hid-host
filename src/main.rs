@@ -11,21 +11,14 @@ mod utils;
 
 use config::load_config;
 use keyboard::Keyboard;
-
-#[cfg(not(target_os = "macos"))]
-use providers::{_base::Provider, layout::LayoutProvider, relay::RelayProvider, time::TimeProvider, volume::VolumeProvider};
-
+use providers::{
+    _base::Provider, hid_kb_state::HidKbStateProvider, layout::LayoutProvider, media::MediaProvider, relay::RelayProvider,
+    time::TimeProvider, volume::VolumeProvider,
+};
 #[cfg(target_os = "macos")]
-use providers::{_base::Provider, layout::LayoutProvider, relay::RelayProvider, time::TimeProvider, volume::VolumeProvider, weather::WeatherProvider};
-
+use providers::weather::WeatherProvider;
 use utils::print_hids::print_unique_hid_devices;
 use tokio::sync::{broadcast, mpsc};
-
-#[cfg(not(target_os = "macos"))]
-use providers::media::MediaProvider;
-
-#[cfg(target_os = "macos")]
-use providers::media::MediaProvider;
 
 #[cfg(target_os = "macos")]
 use core_foundation_sys::runloop::CFRunLoopRun;
@@ -81,6 +74,7 @@ fn get_providers(
         LayoutProvider::new(host_to_device_sender.clone()),
         MediaProvider::new(host_to_device_sender.clone()),
         RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()),
+        HidKbStateProvider::new(device_to_host_sender.clone()),
     ];
 }
 
@@ -95,6 +89,7 @@ fn get_providers(
         LayoutProvider::new(host_to_device_sender.clone()),
         MediaProvider::new(host_to_device_sender.clone()),
         RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()),
+        HidKbStateProvider::new(device_to_host_sender.clone()),
     ];
 
     if let Some(weather_config) = &config::get_config().weather {

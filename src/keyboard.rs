@@ -142,7 +142,7 @@ fn start_read(name: &String, device: HidDevice, is_connected: &Arc<AtomicBool>, 
 
         if let Ok(result) = device.read(data.as_mut()) {
             tracing::debug!("{}: received {:?}", name, data);
-            if result > 0 && data[0] == DataType::RelayFromDevice as u8 {
+            if result > 0 {
                 let _ = device_to_host_sender.send(data.to_vec());
             }
         } else {
