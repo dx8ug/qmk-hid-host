@@ -1,11 +1,5 @@
 use std::{path::PathBuf, sync::OnceLock};
 
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct WeatherConfig {
-    pub url: String,
-}
-
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Providers {
@@ -45,14 +39,24 @@ fn default_true() -> bool {
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub devices: Vec<Device>,
     pub layouts: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconnect_delay: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub weather: Option<WeatherConfig>,
+    #[serde(default, skip_serializing_if = "providers_is_empty")]
+    pub providers: Providers,
+}
+
+fn providers_is_empty(p: &Providers) -> bool {
+    p.time.is_none()
+        && p.volume.is_none()
+        && p.layout.is_none()
+        && p.media.is_none()
+        && p.relay.is_none()
+        && p.state.is_none()
+        && p.weather.is_none()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -91,9 +95,7 @@ pub fn load_config(path: PathBuf) -> &'static Config {
         }],
         layouts: vec!["en".to_string()],
         reconnect_delay: None,
-        weather: Some(WeatherConfig {
-            url: "wttr.in/Hamburg?format=%t".to_string(),
-        }),
+        providers: Providers::default(),
     };
 
     if let Ok(file) = std::fs::read_to_string(&path) {
@@ -175,5 +177,31 @@ mod tests {
         let w = p.weather.unwrap();
         assert!(w.enabled);
         assert_eq!(w.url, "wttr.in/X?format=%t");
+    }
+
+    #[test]
+    fn old_top_level_weather_field_rejected() {
+        let json = r#"{
+            "devices": [{"vendorId": "0x0001", "productId": "0x0002"}],
+            "layouts": [],
+            "weather": {"url": "wttr.in/X?format=%t"}
+        }"#;
+        let err = serde_json::from_str::<Config>(json);
+        assert!(err.is_err(), "old top-level 'weather' must be rejected by deny_unknown_fields");
+    }
+
+    #[test]
+    fn config_with_providers_section_parses() {
+        let json = r#"{
+            "devices": [{"vendorId": "0x0001", "productId": "0x0002"}],
+            "layouts": [],
+            "providers": {
+                "media": {"enabled": false},
+                "weather": {"url": "wttr.in/X?format=%t"}
+            }
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(!cfg.providers.media.unwrap().enabled);
+        assert_eq!(cfg.providers.weather.unwrap().url, "wttr.in/X?format=%t");
     }
 }
