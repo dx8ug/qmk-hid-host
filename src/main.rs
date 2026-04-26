@@ -15,7 +15,7 @@ use keyboard::Keyboard;
 use providers::weather::WeatherProvider;
 use providers::{
     _base::{Provider, ProviderHandle},
-    hid_kb_state::HidKbStateProvider,
+    state::StateProvider,
     layout::LayoutProvider,
     media::MediaProvider,
     relay::RelayProvider,
@@ -50,7 +50,7 @@ fn main() {
     let (is_connected_sender, is_connected_receiver) = mpsc::channel::<bool>(1);
     // Capacity 16: cushion for restart-cycle bursts (HELLO + immediate state from
     // ~5 providers) and pinger overlap. Lagged drops are surfaced via warn! in
-    // start_write/relay/hid_kb_state — too small ⇒ silent packet loss.
+    // start_write/relay/state — too small ⇒ silent packet loss.
     let (host_to_device_sender, _) = broadcast::channel::<Vec<u8>>(16);
     let (device_to_host_sender, _) = broadcast::channel::<Vec<u8>>(16);
 
@@ -82,7 +82,7 @@ fn get_providers(
         LayoutProvider::new(host_to_device_sender.clone()),
         MediaProvider::new(host_to_device_sender.clone()),
         RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()),
-        HidKbStateProvider::new(device_to_host_sender.clone()),
+        StateProvider::new(device_to_host_sender.clone()),
     ];
 }
 
@@ -97,7 +97,7 @@ fn get_providers(
         LayoutProvider::new(host_to_device_sender.clone()),
         MediaProvider::new(host_to_device_sender.clone()),
         RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()), */
-        HidKbStateProvider::new(device_to_host_sender.clone()),
+        StateProvider::new(device_to_host_sender.clone()),
     ];
 
     if let Some(weather_config) = &config::get_config().weather {
