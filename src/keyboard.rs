@@ -71,11 +71,17 @@ impl Keyboard {
 
                 let hid_api = HidApi::new().unwrap();
                 if let Some(device_info) = Self::get_device_info(&hid_api, &vid, &pid, &usage, &usage_page) {
+                    // Per-connection writer lifetime flag — without it the old writer thread,
+                    // still subscribed to the broadcast after disconnect, would wake on the next
+                    // packet and write to a stale device handle, which flips is_connected=false
+                    // and triggers a phantom reconnect cycle.
+                    let write_alive = Arc::new(AtomicBool::new(true));
+
                     let reconnect_timeout = 1000;
                     loop {
                         match device_info.open_device(&hid_api) {
                             Ok(device) => {
-                                start_write(&name, device, &is_connected, &host_to_device_sender);
+                                start_write(&name, device, &is_connected, &write_alive, &host_to_device_sender);
                                 break;
                             }
                             Err(err) => tracing::error!("{}", err),
@@ -115,6 +121,7 @@ impl Keyboard {
                     loop {
                         if !is_connected.load(Relaxed) {
                             tracing::warn!("{}: disconnected", name);
+                            write_alive.store(false, Relaxed);
                             pinger_alive.store(false, Relaxed);
                             let _ = is_connected_sender.try_send(false);
                             break;
@@ -130,15 +137,27 @@ impl Keyboard {
     }
 }
 
-fn start_write(name: &String, device: HidDevice, is_connected: &Arc<AtomicBool>, host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
+fn start_write(
+    name: &String,
+    device: HidDevice,
+    is_connected: &Arc<AtomicBool>,
+    write_alive: &Arc<AtomicBool>,
+    host_to_device_sender: &broadcast::Sender<Vec<u8>>,
+) {
     let name = name.clone();
     let is_connected = is_connected.clone();
+    let write_alive = write_alive.clone();
     let mut host_to_device_receiver = host_to_device_sender.subscribe();
     std::thread::spawn(move || loop {
         tracing::debug!("{}: waiting for data to send...", name);
         std::thread::sleep(std::time::Duration::from_millis(10)); // lowers host CPU usage by order of magnitude
 
         if let Ok(mut received) = host_to_device_receiver.blocking_recv() {
+            // Recheck after recv wakeup: a disconnect during recv would otherwise let us
+            // write to a stale handle and falsely flip is_connected=false on the new cycle.
+            if !write_alive.load(Relaxed) {
+                break;
+            }
             tracing::info!("{}: sending {:?}", name, received);
             received.truncate(32);
             received.resize_with(32, Default::default);
