@@ -152,20 +152,26 @@ fn start_write(
         tracing::debug!("{}: waiting for data to send...", name);
         std::thread::sleep(std::time::Duration::from_millis(10)); // lowers host CPU usage by order of magnitude
 
-        if let Ok(mut received) = host_to_device_receiver.blocking_recv() {
-            // Recheck after recv wakeup: a disconnect during recv would otherwise let us
-            // write to a stale handle and falsely flip is_connected=false on the new cycle.
-            if !write_alive.load(Relaxed) {
-                break;
+        match host_to_device_receiver.blocking_recv() {
+            Ok(mut received) => {
+                // Recheck after recv wakeup: a disconnect during recv would otherwise let us
+                // write to a stale handle and falsely flip is_connected=false on the new cycle.
+                if !write_alive.load(Relaxed) {
+                    break;
+                }
+                tracing::info!("{}: sending {:?}", name, received);
+                received.truncate(32);
+                received.resize_with(32, Default::default);
+                received.insert(0, 0);
+                if let Err(_) = device.write(received.as_mut()) {
+                    is_connected.store(false, Relaxed);
+                    break;
+                }
             }
-            tracing::info!("{}: sending {:?}", name, received);
-            received.truncate(32);
-            received.resize_with(32, Default::default);
-            received.insert(0, 0);
-            if let Err(_) = device.write(received.as_mut()) {
-                is_connected.store(false, Relaxed);
-                break;
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("{}: writer lagged, dropped {} packet(s)", name, n);
             }
+            Err(broadcast::error::RecvError::Closed) => break,
         }
     });
 }

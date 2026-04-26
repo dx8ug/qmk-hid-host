@@ -141,22 +141,28 @@ impl Provider for HidKbStateProvider {
         ProviderHandle::spawn(move |alive| {
             while alive.load(Relaxed) {
                 tracing::debug!("HID KbState Provider: waiting for data...");
-                if let Ok(data) = hid_subscriber.blocking_recv() {
-                    // Recheck after recv: stop() may have flipped alive while we were blocked.
-                    if !alive.load(Relaxed) {
-                        break;
-                    }
-                    let timestamp = format_timestamp();
-                    let type_name = format_data_type(data[0]);
-                    let hex_dump = format_hex_dump(&data);
-                    let parsed_data = parse_data_by_type(&data);
+                match hid_subscriber.blocking_recv() {
+                    Ok(data) => {
+                        // Recheck after recv: stop() may have flipped alive while we were blocked.
+                        if !alive.load(Relaxed) {
+                            break;
+                        }
+                        let timestamp = format_timestamp();
+                        let type_name = format_data_type(data[0]);
+                        let hex_dump = format_hex_dump(&data);
+                        let parsed_data = parse_data_by_type(&data);
 
-                    println!("[{}] HID Data Received:", timestamp);
-                    println!("  Type: {} (0x{:02X})", type_name, data[0]);
-                    println!("  Size: {} bytes", data.len());
-                    println!("  Raw: [{}]", hex_dump);
-                    println!("  Parsed: {}", parsed_data);
-                    println!();
+                        println!("[{}] HID Data Received:", timestamp);
+                        println!("  Type: {} (0x{:02X})", type_name, data[0]);
+                        println!("  Size: {} bytes", data.len());
+                        println!("  Raw: [{}]", hex_dump);
+                        println!("  Parsed: {}", parsed_data);
+                        println!();
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("HID KbState Provider lagged, dropped {} packet(s)", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
 

@@ -27,18 +27,24 @@ impl Provider for RelayProvider {
         ProviderHandle::spawn(move |alive| {
             while alive.load(Relaxed) {
                 tracing::debug!("Relay Provider: waiting for data...");
-                if let Ok(mut data) = relay_subscriber.blocking_recv() {
-                    // Recheck after recv: stop() may have flipped alive while we were blocked.
-                    if !alive.load(Relaxed) {
-                        break;
-                    }
-                    // Filter only RelayFromDevice data
-                    if !data.is_empty() && data[0] == DataType::RelayFromDevice as u8 {
-                        data[0] = DataType::RelayToDevice as u8;
-                        if let Err(e) = host_to_device_sender.send(data) {
-                            tracing::error!("Relay Provider failed to send data: {:?}", e);
+                match relay_subscriber.blocking_recv() {
+                    Ok(mut data) => {
+                        // Recheck after recv: stop() may have flipped alive while we were blocked.
+                        if !alive.load(Relaxed) {
+                            break;
+                        }
+                        // Filter only RelayFromDevice data
+                        if !data.is_empty() && data[0] == DataType::RelayFromDevice as u8 {
+                            data[0] = DataType::RelayToDevice as u8;
+                            if let Err(e) = host_to_device_sender.send(data) {
+                                tracing::error!("Relay Provider failed to send data: {:?}", e);
+                            }
                         }
                     }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Relay Provider lagged, dropped {} packet(s)", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
 
                 std::thread::sleep(std::time::Duration::from_millis(100));
