@@ -121,7 +121,7 @@ fn get_providers(
 }
 
 fn enabled(entry: &Option<config::ProviderEntry>) -> bool {
-    entry.as_ref().map_or(true, |e| e.enabled)
+    entry.as_ref().is_none_or(|e| e.enabled)
 }
 
 #[cfg(not(target_os = "macos"))]
