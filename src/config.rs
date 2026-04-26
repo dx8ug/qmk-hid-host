@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::OnceLock};
 
-#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[derive(Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Providers {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -19,14 +19,14 @@ pub struct Providers {
     pub weather: Option<WeatherEntry>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderEntry {
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WeatherEntry {
     #[serde(default = "default_true")]
@@ -50,13 +50,7 @@ pub struct Config {
 }
 
 fn providers_is_empty(p: &Providers) -> bool {
-    p.time.is_none()
-        && p.volume.is_none()
-        && p.layout.is_none()
-        && p.media.is_none()
-        && p.relay.is_none()
-        && p.state.is_none()
-        && p.weather.is_none()
+    p == &Providers::default()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
