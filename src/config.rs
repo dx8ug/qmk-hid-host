@@ -6,6 +6,44 @@ pub struct WeatherConfig {
     pub url: String,
 }
 
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Providers {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ProviderEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weather: Option<WeatherEntry>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderEntry {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WeatherEntry {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub url: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -88,4 +126,54 @@ where
     S: serde::Serializer,
 {
     serializer.serialize_str(&format!("0x{:04x}", value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_providers_defaults_to_all_none() {
+        let p: Providers = serde_json::from_str("{}").unwrap();
+        assert!(p.time.is_none());
+        assert!(p.weather.is_none());
+    }
+
+    #[test]
+    fn provider_entry_enabled_defaults_to_true() {
+        let p: Providers = serde_json::from_str(r#"{"media": {}}"#).unwrap();
+        assert!(p.media.unwrap().enabled);
+    }
+
+    #[test]
+    fn provider_entry_explicit_false_is_disabled() {
+        let p: Providers = serde_json::from_str(r#"{"media": {"enabled": false}}"#).unwrap();
+        assert!(!p.media.unwrap().enabled);
+    }
+
+    #[test]
+    fn unknown_provider_name_rejected() {
+        let err = serde_json::from_str::<Providers>(r#"{"tiem": {}}"#);
+        assert!(err.is_err(), "expected serde error on unknown provider 'tiem'");
+    }
+
+    #[test]
+    fn unknown_field_inside_provider_entry_rejected() {
+        let err = serde_json::from_str::<Providers>(r#"{"media": {"enable": false}}"#);
+        assert!(err.is_err(), "expected serde error on misspelled 'enable'");
+    }
+
+    #[test]
+    fn weather_requires_url() {
+        let err = serde_json::from_str::<Providers>(r#"{"weather": {"enabled": true}}"#);
+        assert!(err.is_err(), "weather without url must fail");
+    }
+
+    #[test]
+    fn weather_with_url_parses() {
+        let p: Providers = serde_json::from_str(r#"{"weather": {"url": "wttr.in/X?format=%t"}}"#).unwrap();
+        let w = p.weather.unwrap();
+        assert!(w.enabled);
+        assert_eq!(w.url, "wttr.in/X?format=%t");
+    }
 }
