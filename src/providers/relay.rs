@@ -27,11 +27,10 @@ impl Provider for RelayProvider {
         ProviderHandle::spawn(move |alive| {
             // Poll via try_recv so stop() can wake the thread within IDLE_POLL on the next
             // alive check, instead of blocking until the next packet arrives.
-            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
             while alive.load(Relaxed) {
                 match relay_subscriber.try_recv() {
                     Ok(mut data) => {
-                        // Filter only RelayFromDevice data
                         if !data.is_empty() && data[0] == DataType::RelayFromDevice as u8 {
                             data[0] = DataType::RelayToDevice as u8;
                             if let Err(e) = host_to_device_sender.send(data) {

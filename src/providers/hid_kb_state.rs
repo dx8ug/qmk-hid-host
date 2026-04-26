@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::Local;
 use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
@@ -13,11 +13,6 @@ impl HidKbStateProvider {
     pub fn new(device_to_host_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
         Box::new(HidKbStateProvider { device_to_host_sender })
     }
-}
-
-fn format_timestamp() -> String {
-    let now: DateTime<Local> = Local::now();
-    now.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
 }
 
 fn parse_kb_state(data: &[u8]) -> String {
@@ -64,14 +59,18 @@ impl Provider for HidKbStateProvider {
         ProviderHandle::spawn(move |alive| {
             // Poll via try_recv so stop() can wake the thread within IDLE_POLL on the next
             // alive check, instead of blocking until the next packet arrives.
-            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
             while alive.load(Relaxed) {
                 match hid_subscriber.try_recv() {
                     Ok(data) => {
                         if data.is_empty() || data[0] != DataType::HidKbState as u8 {
                             continue;
                         }
-                        println!("[{}] HidKbState: {}", format_timestamp(), parse_kb_state(&data));
+                        println!(
+                            "[{}] HidKbState: {}",
+                            Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                            parse_kb_state(&data),
+                        );
                     }
                     Err(broadcast::error::TryRecvError::Empty) => std::thread::sleep(IDLE_POLL),
                     Err(broadcast::error::TryRecvError::Lagged(n)) => {
