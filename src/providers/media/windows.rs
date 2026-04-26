@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 use windows::{
     Foundation::{EventRegistrationToken, TypedEventHandler},
@@ -95,10 +94,8 @@ impl MediaProvider {
 impl Provider for MediaProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Media Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut session_token: Option<EventRegistrationToken> = None;
 
             if let Ok(manager) = get_manager() {
@@ -122,7 +119,7 @@ impl Provider for MediaProvider {
                     .CurrentSessionChanged(&handler)
                     .map_err(|e| tracing::error!("Can not register CurrentSessionChanged callback: {}", e));
 
-                while thread_alive.load(Relaxed) {
+                while alive.load(Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
 
@@ -132,7 +129,6 @@ impl Provider for MediaProvider {
 
                 tracing::info!("Media Provider stopped");
             }
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

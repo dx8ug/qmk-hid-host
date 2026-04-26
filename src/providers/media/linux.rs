@@ -1,6 +1,5 @@
 use mpris::{Metadata, PlayerFinder};
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -49,13 +48,11 @@ impl MediaProvider {
 impl Provider for MediaProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Media Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut media_data = (String::default(), String::default());
 
-            'outer: while thread_alive.load(Relaxed) {
+            'outer: while alive.load(Relaxed) {
                 if let Ok(Ok(player)) = PlayerFinder::new().map(|x| x.find_active()) {
                     if let Ok(metadata) = player.get_metadata() {
                         media_data = send_media_data(&metadata, &data_sender, &media_data);
@@ -65,7 +62,7 @@ impl Provider for MediaProvider {
                         for event in events {
                             tracing::debug!("{:?}", event);
 
-                            if !thread_alive.load(Relaxed) {
+                            if !alive.load(Relaxed) {
                                 break 'outer;
                             }
 
@@ -90,7 +87,6 @@ impl Provider for MediaProvider {
             }
 
             tracing::info!("Media Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

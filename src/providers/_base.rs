@@ -10,7 +10,13 @@ pub struct ProviderHandle {
 }
 
 impl ProviderHandle {
-    pub fn new(alive: Arc<AtomicBool>) -> Self {
+    pub fn spawn<F>(thread_body: F) -> Self
+    where
+        F: FnOnce(Arc<AtomicBool>) + Send + 'static,
+    {
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
+        std::thread::spawn(move || thread_body(thread_alive));
         Self { alive }
     }
 

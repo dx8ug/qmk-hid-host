@@ -1,7 +1,6 @@
 #![cfg(target_os = "macos")]
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -50,13 +49,11 @@ impl WeatherProvider {
 impl Provider for WeatherProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Weather Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let host_to_device_sender = self.host_to_device_sender.clone();
         let url = self.url.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut last_weather: Option<i8> = None;
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 if let Some(weather) = get_weather(&url) {
                     if last_weather != Some(weather) {
                         last_weather = Some(weather);
@@ -66,7 +63,7 @@ impl Provider for WeatherProvider {
 
                 // Update every 15 minutes
                 for _ in 0..(15 * 60) {
-                    if !thread_alive.load(Relaxed) {
+                    if !alive.load(Relaxed) {
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -74,7 +71,6 @@ impl Provider for WeatherProvider {
             }
 
             tracing::info!("Weather Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

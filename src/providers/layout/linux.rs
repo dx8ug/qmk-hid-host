@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use std::{ffi, mem, ptr};
 use tokio::sync::broadcast;
 use x11::xlib::{_XDisplay, _XkbDesc, _XkbStateRec, XGetAtomName, XOpenDisplay, XkbAllocKeyboard, XkbGetNames, XkbGetState};
@@ -49,18 +48,16 @@ impl LayoutProvider {
 impl Provider for LayoutProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut synced_layout = 0;
             let display = unsafe { XOpenDisplay(ptr::null()) };
             let keyboard = unsafe { XkbAllocKeyboard() };
             let symbols = get_symbols(display, keyboard);
             let symbol_list = symbols.split('+').map(|x| x.to_string()).collect::<Vec<String>>();
 
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 let layout = get_layout_index(display);
                 if synced_layout != layout {
                     synced_layout = layout;
@@ -73,7 +70,6 @@ impl Provider for LayoutProvider {
             }
 
             tracing::info!("Layout Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

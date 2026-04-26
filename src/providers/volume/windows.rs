@@ -62,22 +62,19 @@ impl VolumeProvider {
 impl Provider for VolumeProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         if let Ok(volume) = get_volume() {
             send_data(&volume, &self.data_sender);
         }
 
         let data_sender = self.data_sender.clone();
-        std::thread::spawn(move || loop {
-            if subscribe_and_wait(&data_sender, &thread_alive) {
+        ProviderHandle::spawn(move |alive| loop {
+            if subscribe_and_wait(&data_sender, &alive) {
                 tracing::info!("Volume Provider stopped");
                 break;
             }
 
             std::thread::sleep(std::time::Duration::from_millis(10000));
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }
 

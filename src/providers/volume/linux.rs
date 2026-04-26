@@ -1,8 +1,7 @@
 use libpulse_binding::context::subscribe::Facility;
 use pulsectl::controllers::{DeviceControl, SinkController};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -39,14 +38,12 @@ impl VolumeProvider {
 impl Provider for VolumeProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
 
         let mut volume = get_volume().unwrap_or_default();
         send_data(&volume, &self.data_sender);
 
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let controller = SinkController::create().map_err(|e| tracing::error!("{}", e)).unwrap();
             let mut ctx = controller.handler.context.deref().borrow_mut();
 
@@ -60,12 +57,11 @@ impl Provider for VolumeProvider {
 
             ctx.subscribe(Facility::Sink.to_interest_mask(), |_| {});
 
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 controller.handler.mainloop.deref().borrow_mut().iterate(true);
             }
 
             tracing::info!("Volume Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

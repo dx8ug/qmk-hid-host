@@ -7,8 +7,7 @@ use coreaudio_sys::{
 };
 use std::option::Option;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -202,19 +201,16 @@ impl VolumeProvider {
 impl Provider for VolumeProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
 
         register_volume_listener(&self.volume_changed_block);
         register_device_change_listener(&self.device_changed_block);
 
-        std::thread::spawn(move || {
-            while thread_alive.load(Relaxed) {
+        ProviderHandle::spawn(move |alive| {
+            while alive.load(Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
 
             tracing::info!("Volume Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 use windows::Win32::{
     Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME},
@@ -49,13 +48,11 @@ impl LayoutProvider {
 impl Provider for LayoutProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut synced_layout = "".to_string();
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 if let Some(layout) = unsafe { get_layout() } {
                     if synced_layout != layout {
                         synced_layout = layout;
@@ -67,7 +64,6 @@ impl Provider for LayoutProvider {
             }
 
             tracing::info!("Layout Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

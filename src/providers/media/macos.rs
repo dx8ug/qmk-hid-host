@@ -1,6 +1,5 @@
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -69,13 +68,11 @@ impl MediaProvider {
 impl Provider for MediaProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Media Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let host_to_device_sender = self.host_to_device_sender.clone();
 
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut last_media_string = "".to_string();
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 let media_string = get_media_string();
                 if last_media_string != media_string {
                     last_media_string = media_string.clone();
@@ -85,7 +82,6 @@ impl Provider for MediaProvider {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             tracing::info!("Media Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

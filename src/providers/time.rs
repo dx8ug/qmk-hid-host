@@ -1,6 +1,5 @@
 use chrono::{DateTime, Local, Timelike};
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
@@ -34,12 +33,10 @@ impl TimeProvider {
 impl Provider for TimeProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Time Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let host_to_device_sender = self.host_to_device_sender.clone();
-        std::thread::spawn(move || {
+        ProviderHandle::spawn(move |alive| {
             let mut synced_time = (0u8, 0u8);
-            while thread_alive.load(Relaxed) {
+            while alive.load(Relaxed) {
                 let time = get_time();
                 if synced_time != time {
                     synced_time = time;
@@ -50,7 +47,6 @@ impl Provider for TimeProvider {
             }
 
             tracing::info!("Time Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

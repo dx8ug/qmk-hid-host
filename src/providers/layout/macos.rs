@@ -1,8 +1,7 @@
 use core_foundation::base::{CFRelease, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
 use libc::c_void;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use crate::config::get_config;
@@ -66,14 +65,12 @@ impl LayoutProvider {
 impl Provider for LayoutProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
         let mut synced_layout = "".to_string();
 
-        std::thread::spawn(move || {
-            while thread_alive.load(Relaxed) {
+        ProviderHandle::spawn(move |alive| {
+            while alive.load(Relaxed) {
                 if let Some(layout) = get_keyboard_layout() {
                     let lang = layout.split('.').last().unwrap().to_string();
                     if synced_layout != lang {
@@ -85,7 +82,6 @@ impl Provider for LayoutProvider {
             }
 
             tracing::info!("Layout Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }

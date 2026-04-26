@@ -1,6 +1,5 @@
 use chrono::{DateTime, Local};
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use super::_base::{Provider, ProviderHandle};
@@ -137,16 +136,14 @@ fn parse_data_by_type(data: &[u8]) -> String {
 impl Provider for HidKbStateProvider {
     fn start(&self) -> ProviderHandle {
         tracing::info!("HID KbState Provider started");
-        let alive = Arc::new(AtomicBool::new(true));
-        let thread_alive = alive.clone();
         let mut hid_subscriber = self.device_to_host_sender.subscribe();
 
-        std::thread::spawn(move || {
-            while thread_alive.load(Relaxed) {
+        ProviderHandle::spawn(move |alive| {
+            while alive.load(Relaxed) {
                 tracing::debug!("HID KbState Provider: waiting for data...");
                 if let Ok(data) = hid_subscriber.blocking_recv() {
                     // Recheck after recv: stop() may have flipped alive while we were blocked.
-                    if !thread_alive.load(Relaxed) {
+                    if !alive.load(Relaxed) {
                         break;
                     }
                     let timestamp = format_timestamp();
@@ -164,7 +161,6 @@ impl Provider for HidKbStateProvider {
             }
 
             tracing::info!("HID KbState Provider stopped");
-        });
-        ProviderHandle::new(alive)
+        })
     }
 }
