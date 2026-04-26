@@ -25,14 +25,12 @@ impl Provider for RelayProvider {
         let host_to_device_sender = self.host_to_device_sender.clone();
         let mut relay_subscriber = self.device_to_host_sender.subscribe();
         ProviderHandle::spawn(move |alive| {
+            // Poll via try_recv so stop() can wake the thread within IDLE_POLL on the next
+            // alive check, instead of blocking until the next packet arrives.
+            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
             while alive.load(Relaxed) {
-                tracing::debug!("Relay Provider: waiting for data...");
-                match relay_subscriber.blocking_recv() {
+                match relay_subscriber.try_recv() {
                     Ok(mut data) => {
-                        // Recheck after recv: stop() may have flipped alive while we were blocked.
-                        if !alive.load(Relaxed) {
-                            break;
-                        }
                         // Filter only RelayFromDevice data
                         if !data.is_empty() && data[0] == DataType::RelayFromDevice as u8 {
                             data[0] = DataType::RelayToDevice as u8;
@@ -41,13 +39,12 @@ impl Provider for RelayProvider {
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                    Err(broadcast::error::TryRecvError::Empty) => std::thread::sleep(IDLE_POLL),
+                    Err(broadcast::error::TryRecvError::Lagged(n)) => {
                         tracing::warn!("Relay Provider lagged, dropped {} packet(s)", n);
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::TryRecvError::Closed) => break,
                 }
-
-                std::thread::sleep(std::time::Duration::from_millis(100));
             }
 
             tracing::info!("Relay Provider stopped");

@@ -139,14 +139,12 @@ impl Provider for HidKbStateProvider {
         let mut hid_subscriber = self.device_to_host_sender.subscribe();
 
         ProviderHandle::spawn(move |alive| {
+            // Poll via try_recv so stop() can wake the thread within IDLE_POLL on the next
+            // alive check, instead of blocking until the next packet arrives.
+            const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
             while alive.load(Relaxed) {
-                tracing::debug!("HID KbState Provider: waiting for data...");
-                match hid_subscriber.blocking_recv() {
+                match hid_subscriber.try_recv() {
                     Ok(data) => {
-                        // Recheck after recv: stop() may have flipped alive while we were blocked.
-                        if !alive.load(Relaxed) {
-                            break;
-                        }
                         let timestamp = format_timestamp();
                         let type_name = format_data_type(data[0]);
                         let hex_dump = format_hex_dump(&data);
@@ -159,10 +157,11 @@ impl Provider for HidKbStateProvider {
                         println!("  Parsed: {}", parsed_data);
                         println!();
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                    Err(broadcast::error::TryRecvError::Empty) => std::thread::sleep(IDLE_POLL),
+                    Err(broadcast::error::TryRecvError::Lagged(n)) => {
                         tracing::warn!("HID KbState Provider lagged, dropped {} packet(s)", n);
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::TryRecvError::Closed) => break,
                 }
             }
 
