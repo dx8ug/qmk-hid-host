@@ -5,13 +5,13 @@ use tokio::sync::broadcast;
 use super::_base::{Provider, ProviderHandle};
 use crate::data_type::{DataType, HidKbStateSubtype};
 
-pub struct HidKbStateProvider {
+pub struct StateProvider {
     device_to_host_sender: broadcast::Sender<Vec<u8>>,
 }
 
-impl HidKbStateProvider {
+impl StateProvider {
     pub fn new(device_to_host_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        Box::new(HidKbStateProvider { device_to_host_sender })
+        Box::new(StateProvider { device_to_host_sender })
     }
 }
 
@@ -51,9 +51,9 @@ fn parse_kb_state(data: &[u8]) -> String {
     }
 }
 
-impl Provider for HidKbStateProvider {
+impl Provider for StateProvider {
     fn start(&self) -> ProviderHandle {
-        tracing::info!("HID KbState Provider started");
+        tracing::info!("State Provider started");
         let mut hid_subscriber = self.device_to_host_sender.subscribe();
 
         ProviderHandle::spawn(move |alive| {
@@ -74,13 +74,13 @@ impl Provider for HidKbStateProvider {
                     }
                     Err(broadcast::error::TryRecvError::Empty) => std::thread::sleep(IDLE_POLL),
                     Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                        tracing::warn!("HID KbState Provider lagged, dropped {} packet(s)", n);
+                        tracing::warn!("State Provider lagged, dropped {} packet(s)", n);
                     }
                     Err(broadcast::error::TryRecvError::Closed) => break,
                 }
             }
 
-            tracing::info!("HID KbState Provider stopped");
+            tracing::info!("State Provider stopped");
         })
     }
 }

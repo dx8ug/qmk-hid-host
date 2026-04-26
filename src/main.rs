@@ -15,7 +15,7 @@ use keyboard::Keyboard;
 use providers::weather::WeatherProvider;
 use providers::{
     _base::{Provider, ProviderHandle},
-    hid_kb_state::HidKbStateProvider,
+    state::StateProvider,
     layout::LayoutProvider,
     media::MediaProvider,
     relay::RelayProvider,
@@ -50,7 +50,7 @@ fn main() {
     let (is_connected_sender, is_connected_receiver) = mpsc::channel::<bool>(1);
     // Capacity 16: cushion for restart-cycle bursts (HELLO + immediate state from
     // ~5 providers) and pinger overlap. Lagged drops are surfaced via warn! in
-    // start_write/relay/hid_kb_state — too small ⇒ silent packet loss.
+    // start_write/relay/state — too small ⇒ silent packet loss.
     let (host_to_device_sender, _) = broadcast::channel::<Vec<u8>>(16);
     let (device_to_host_sender, _) = broadcast::channel::<Vec<u8>>(16);
 
@@ -71,40 +71,39 @@ fn main() {
     run(host_to_device_sender, device_to_host_sender, is_connected_receiver);
 }
 
-#[cfg(not(target_os = "macos"))]
 fn get_providers(
     host_to_device_sender: &broadcast::Sender<Vec<u8>>,
     device_to_host_sender: &broadcast::Sender<Vec<u8>>,
 ) -> Vec<Box<dyn Provider>> {
-    return vec![
-        TimeProvider::new(host_to_device_sender.clone()),
-        VolumeProvider::new(host_to_device_sender.clone()),
-        LayoutProvider::new(host_to_device_sender.clone()),
-        MediaProvider::new(host_to_device_sender.clone()),
-        RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()),
-        HidKbStateProvider::new(device_to_host_sender.clone()),
-    ];
-}
+    let p = &config::get_config().providers;
+    let mut out: Vec<Box<dyn Provider>> = Vec::with_capacity(7);
 
-#[cfg(target_os = "macos")]
-fn get_providers(
-    host_to_device_sender: &broadcast::Sender<Vec<u8>>,
-    device_to_host_sender: &broadcast::Sender<Vec<u8>>,
-) -> Vec<Box<dyn Provider>> {
-    let mut providers: Vec<Box<dyn Provider>> = vec![
-        /*         TimeProvider::new(host_to_device_sender.clone()),
-        VolumeProvider::new(host_to_device_sender.clone()),
-        LayoutProvider::new(host_to_device_sender.clone()),
-        MediaProvider::new(host_to_device_sender.clone()),
-        RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()), */
-        HidKbStateProvider::new(device_to_host_sender.clone()),
-    ];
+    let mut try_push = |entry: &Option<config::ProviderEntry>, name: &str, make: &dyn Fn() -> Box<dyn Provider>| {
+        if entry.as_ref().is_none_or(|e| e.enabled) {
+            out.push(make());
+            tracing::info!("provider enabled: {}", name);
+        }
+    };
 
-    if let Some(weather_config) = &config::get_config().weather {
-        providers.push(WeatherProvider::new(host_to_device_sender.clone(), weather_config.url.clone()));
+    try_push(&p.time, "time", &|| TimeProvider::new(host_to_device_sender.clone()));
+    try_push(&p.volume, "volume", &|| VolumeProvider::new(host_to_device_sender.clone()));
+    try_push(&p.layout, "layout", &|| LayoutProvider::new(host_to_device_sender.clone()));
+    try_push(&p.media, "media", &|| MediaProvider::new(host_to_device_sender.clone()));
+    try_push(&p.relay, "relay", &|| RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()));
+    try_push(&p.state, "state", &|| StateProvider::new(device_to_host_sender.clone()));
+
+    let weather = p.weather.as_ref().filter(|w| w.enabled);
+    #[cfg(target_os = "macos")]
+    if let Some(w) = weather {
+        out.push(WeatherProvider::new(host_to_device_sender.clone(), w.url.clone()));
+        tracing::info!("provider enabled: weather");
+    }
+    #[cfg(not(target_os = "macos"))]
+    if weather.is_some() {
+        tracing::warn!("provider 'weather' is macOS-only, ignored");
     }
 
-    return providers;
+    out
 }
 
 #[cfg(not(target_os = "macos"))]

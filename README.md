@@ -93,6 +93,7 @@ Default configuration is set to [stront](https://github.com/zzeneg/stront). For 
   - `usage` and `usagePage` - optional, override only if `RAW_USAGE_ID` and `RAW_USAGE_PAGE` were redefined in firmware
 - `layouts` - list of supported keyboard layouts in two-letter format (app sends layout's index, not name)
 - `reconnectDelay` - delay between reconnecting attempts in milliseconds (optional, default is 5000)
+- `providers` - optional object that toggles individual providers. Each provider is on by default; set `{ "enabled": false }` to disable. Example: `"providers": { "media": { "enabled": false } }`. The `weather` provider is the exception — it is **off by default** and turns on only when its entry includes a `url`. Unknown provider names are rejected with a parse error.
 
 #### Minimal config
 
@@ -148,8 +149,9 @@ When you verified that the application works with your keyboard, you can use `qm
 
    ```json
    "layouts": ["ABC", "Russian"],
-   "weather": {
-     "url": "wttr.in/Hamburg?format=%t"
+   "providers": {
+     "weather": { "url": "wttr.in/Hamburg?format=%t" }
+   }
    ```
 
    if you don't know what layout are installed in you system, run qmk-hid-host with the layouts listed above, change lang and look at terminal output:
@@ -184,6 +186,7 @@ When you verified that the application works with your keyboard, you can use `qm
 
 ## Changelog
 
+- 2026-04-26 - move provider toggles into `providers` config section; **breaking change**: top-level `weather` field replaced with `providers.weather`
 - 2025-11-11 - add support for weather and spotify with MacOS
 - 2024-10-03 - add support for multiple devices, restructure config
 - 2024-09-15 - add MacOS support
