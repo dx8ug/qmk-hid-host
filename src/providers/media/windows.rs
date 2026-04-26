@@ -8,7 +8,7 @@ use windows::{
 
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 fn get_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, ()> {
     return GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
@@ -84,25 +84,20 @@ fn send_data(data_type: DataType, value: &String, data_sender: &broadcast::Sende
 
 pub struct MediaProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl MediaProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = MediaProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(MediaProvider { data_sender });
     }
 }
 
 impl Provider for MediaProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Media Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut session_token: Option<EventRegistrationToken> = None;
 
@@ -127,11 +122,7 @@ impl Provider for MediaProvider {
                     .CurrentSessionChanged(&handler)
                     .map_err(|e| tracing::error!("Can not register CurrentSessionChanged callback: {}", e));
 
-                loop {
-                    if !is_started.load(Relaxed) {
-                        break;
-                    }
-
+                while thread_alive.load(Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
 
@@ -142,9 +133,6 @@ impl Provider for MediaProvider {
                 tracing::info!("Media Provider stopped");
             }
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

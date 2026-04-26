@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
 
-use super::_base::Provider;
+use super::_base::{Provider, ProviderHandle};
 
 fn get_time() -> (u8, u8) {
     let now: DateTime<Local> = Local::now();
@@ -23,32 +23,23 @@ fn send_data(value: &(u8, u8), host_to_device_sender: &broadcast::Sender<Vec<u8>
 
 pub struct TimeProvider {
     host_to_device_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl TimeProvider {
     pub fn new(host_to_device_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = TimeProvider {
-            host_to_device_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(TimeProvider { host_to_device_sender });
     }
 }
 
 impl Provider for TimeProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Time Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let host_to_device_sender = self.host_to_device_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut synced_time = (0u8, 0u8);
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 let time = get_time();
                 if synced_time != time {
                     synced_time = time;
@@ -60,9 +51,6 @@ impl Provider for TimeProvider {
 
             tracing::info!("Time Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

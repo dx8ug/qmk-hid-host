@@ -2,12 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
 use std::{ffi, mem, ptr};
 use tokio::sync::broadcast;
-use x11::xlib::{XGetAtomName, XOpenDisplay, XkbAllocKeyboard, XkbGetNames, XkbGetState, _XDisplay, _XkbDesc, _XkbStateRec};
+use x11::xlib::{_XDisplay, _XkbDesc, _XkbStateRec, XGetAtomName, XOpenDisplay, XkbAllocKeyboard, XkbGetNames, XkbGetState};
 
 use crate::config::get_config;
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 fn get_symbols(display: *mut _XDisplay, keyboard: *mut _XkbDesc) -> String {
     unsafe { XkbGetNames(display, 1 << 2, keyboard) };
@@ -38,26 +38,21 @@ fn send_data(value: &String, layouts: &Vec<String>, data_sender: &broadcast::Sen
 
 pub struct LayoutProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl LayoutProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = LayoutProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(LayoutProvider { data_sender });
     }
 }
 
 impl Provider for LayoutProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut synced_layout = 0;
             let display = unsafe { XOpenDisplay(ptr::null()) };
@@ -65,11 +60,7 @@ impl Provider for LayoutProvider {
             let symbols = get_symbols(display, keyboard);
             let symbol_list = symbols.split('+').map(|x| x.to_string()).collect::<Vec<String>>();
 
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 let layout = get_layout_index(display);
                 if synced_layout != layout {
                     synced_layout = layout;
@@ -83,9 +74,6 @@ impl Provider for LayoutProvider {
 
             tracing::info!("Layout Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

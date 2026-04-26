@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
-use crate::providers::_base::Provider;
+use crate::providers::_base::{Provider, ProviderHandle};
 
 extern "C" {
     pub fn AudioObjectAddPropertyListenerBlock(
@@ -170,7 +170,6 @@ fn send_data(value: &f32, push_sender: &broadcast::Sender<Vec<u8>>) {
 }
 
 pub struct VolumeProvider {
-    is_started: Arc<AtomicBool>,
     device_changed_block: RcBlock<dyn Fn(u32, u64)>,
     volume_changed_block: RcBlock<dyn Fn(u32, u64)>,
 }
@@ -193,38 +192,29 @@ impl VolumeProvider {
             }
         });
 
-        let provider = VolumeProvider {
-            is_started: Arc::new(AtomicBool::new(false)),
+        Box::new(VolumeProvider {
             device_changed_block,
             volume_changed_block,
-        };
-        Box::new(provider)
+        })
     }
 }
 
 impl Provider for VolumeProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        self.is_started.store(true, Relaxed);
-        let is_started = self.is_started.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
 
         register_volume_listener(&self.volume_changed_block);
         register_device_change_listener(&self.device_changed_block);
 
         std::thread::spawn(move || {
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
 
             tracing::info!("Volume Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

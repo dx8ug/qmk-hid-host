@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
 
-use super::_base::Provider;
+use super::_base::{Provider, ProviderHandle};
 
 fn get_weather(url: &str) -> Option<i8> {
     let output = Command::new("curl").args(["-s", url]).output();
@@ -35,35 +35,28 @@ fn send_data(value: &i8, host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
 
 pub struct WeatherProvider {
     host_to_device_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
     url: String,
 }
 
 impl WeatherProvider {
     pub fn new(host_to_device_sender: broadcast::Sender<Vec<u8>>, url: String) -> Box<dyn Provider> {
-        let provider = WeatherProvider {
+        return Box::new(WeatherProvider {
             host_to_device_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
             url,
-        };
-        return Box::new(provider);
+        });
     }
 }
 
 impl Provider for WeatherProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Weather Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let host_to_device_sender = self.host_to_device_sender.clone();
-        let is_started = self.is_started.clone();
         let url = self.url.clone();
         std::thread::spawn(move || {
             let mut last_weather: Option<i8> = None;
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 if let Some(weather) = get_weather(&url) {
                     if last_weather != Some(weather) {
                         last_weather = Some(weather);
@@ -73,7 +66,7 @@ impl Provider for WeatherProvider {
 
                 // Update every 15 minutes
                 for _ in 0..(15 * 60) {
-                    if !is_started.load(Relaxed) {
+                    if !thread_alive.load(Relaxed) {
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -82,9 +75,6 @@ impl Provider for WeatherProvider {
 
             tracing::info!("Weather Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

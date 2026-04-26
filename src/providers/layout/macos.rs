@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 use crate::config::get_config;
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 #[link(name = "Carbon", kind = "framework")]
 extern "C" {
@@ -47,7 +47,7 @@ fn send_data(value: &String, layouts: &Vec<String>, data_sender: &broadcast::Sen
     tracing::info!("new layout: '{0}', layout list: {1:?}", value, layouts);
     if let Some(index) = layouts.into_iter().position(|r| r == value) {
         let data = vec![DataType::Layout as u8, index as u8];
-        if let Err(e) =  data_sender.send(data) {
+        if let Err(e) = data_sender.send(data) {
             tracing::error!("failed to send layout data: {}", e);
         }
     }
@@ -55,47 +55,37 @@ fn send_data(value: &String, layouts: &Vec<String>, data_sender: &broadcast::Sen
 
 pub struct LayoutProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl LayoutProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = LayoutProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        Box::new(provider)
+        Box::new(LayoutProvider { data_sender })
     }
 }
 
 impl Provider for LayoutProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         let mut synced_layout = "".to_string();
 
-        std::thread::spawn(move || loop {
-            if !is_started.load(Relaxed) {
-                break;
-            }
-
-            if let Some(layout) = get_keyboard_layout() {
-                let lang = layout.split('.').last().unwrap().to_string();
-                if synced_layout != lang {
-                    synced_layout = lang;
-                    send_data(&synced_layout, layouts, &data_sender);
+        std::thread::spawn(move || {
+            while thread_alive.load(Relaxed) {
+                if let Some(layout) = get_keyboard_layout() {
+                    let lang = layout.split('.').last().unwrap().to_string();
+                    if synced_layout != lang {
+                        synced_layout = lang;
+                        send_data(&synced_layout, layouts, &data_sender);
+                    }
                 }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            tracing::info!("Layout Provider stopped");
         });
-
-        tracing::info!("Layout Provider stopped");
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

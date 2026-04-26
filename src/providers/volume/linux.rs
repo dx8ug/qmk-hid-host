@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 fn get_volume() -> Option<f32> {
     let mut controller = SinkController::create().ok()?;
@@ -28,25 +28,20 @@ fn send_data(value: &f32, push_sender: &broadcast::Sender<Vec<u8>>) {
 
 pub struct VolumeProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl VolumeProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = VolumeProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(VolumeProvider { data_sender });
     }
 }
 
 impl Provider for VolumeProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
 
         let mut volume = get_volume().unwrap_or_default();
         send_data(&volume, &self.data_sender);
@@ -65,19 +60,12 @@ impl Provider for VolumeProvider {
 
             ctx.subscribe(Facility::Sink.to_interest_mask(), |_| {});
 
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 controller.handler.mainloop.deref().borrow_mut().iterate(true);
             }
 
             tracing::info!("Volume Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

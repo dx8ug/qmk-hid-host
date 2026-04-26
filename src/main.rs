@@ -11,14 +11,19 @@ mod utils;
 
 use config::load_config;
 use keyboard::Keyboard;
-use providers::{
-    _base::Provider, hid_kb_state::HidKbStateProvider, layout::LayoutProvider, media::MediaProvider, relay::RelayProvider,
-    time::TimeProvider, volume::VolumeProvider,
-};
 #[cfg(target_os = "macos")]
 use providers::weather::WeatherProvider;
-use utils::print_hids::print_unique_hid_devices;
+use providers::{
+    _base::{Provider, ProviderHandle},
+    hid_kb_state::HidKbStateProvider,
+    layout::LayoutProvider,
+    media::MediaProvider,
+    relay::RelayProvider,
+    time::TimeProvider,
+    volume::VolumeProvider,
+};
 use tokio::sync::{broadcast, mpsc};
+use utils::print_hids::print_unique_hid_devices;
 
 #[cfg(target_os = "macos")]
 use core_foundation_sys::runloop::CFRunLoopRun;
@@ -32,7 +37,7 @@ struct Args {
     config: Option<std::path::PathBuf>,
     /// Print all connected HIDs
     #[arg(short, long)]
-    print_hids: bool
+    print_hids: bool,
 }
 
 fn main() {
@@ -84,11 +89,11 @@ fn get_providers(
     device_to_host_sender: &broadcast::Sender<Vec<u8>>,
 ) -> Vec<Box<dyn Provider>> {
     let mut providers: Vec<Box<dyn Provider>> = vec![
-        TimeProvider::new(host_to_device_sender.clone()),
+        /*         TimeProvider::new(host_to_device_sender.clone()),
         VolumeProvider::new(host_to_device_sender.clone()),
         LayoutProvider::new(host_to_device_sender.clone()),
         MediaProvider::new(host_to_device_sender.clone()),
-        RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()),
+        RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()), */
         HidKbStateProvider::new(device_to_host_sender.clone()),
     ];
 
@@ -130,7 +135,7 @@ fn start(
     let providers = get_providers(&host_to_device_sender, &device_to_host_sender);
 
     let mut connected_count = 0;
-    let mut is_started = false;
+    let mut handles: Vec<ProviderHandle> = Vec::new();
 
     loop {
         if let Some(is_connected) = is_connected_receiver.blocking_recv() {
@@ -138,17 +143,17 @@ fn start(
             tracing::info!("Connected devices: {}", connected_count);
 
             // if new device is connected - restart providers to send all available data
-            if is_started && (connected_count == 0 || is_connected) {
+            if !handles.is_empty() && (connected_count == 0 || is_connected) {
                 tracing::info!("Stopping providers");
-                is_started = false;
-                providers.iter().for_each(|p| p.stop());
+                for handle in handles.drain(..) {
+                    handle.stop();
+                }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
 
-            if !is_started && connected_count > 0 {
+            if handles.is_empty() && connected_count > 0 {
                 tracing::info!("Starting providers");
-                is_started = true;
-                providers.iter().for_each(|p| p.start());
+                handles = providers.iter().map(|p| p.start()).collect();
             }
         }
     }

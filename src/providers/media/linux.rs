@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 fn send_media_data(metadata: &Metadata, data_sender: &broadcast::Sender<Vec<u8>>, current: &(String, String)) -> (String, String) {
     let (mut artist, mut title) = current.clone();
@@ -38,33 +38,24 @@ fn send_data(data_type: DataType, value: &String, data_sender: &broadcast::Sende
 
 pub struct MediaProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl MediaProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = MediaProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(MediaProvider { data_sender });
     }
 }
 
 impl Provider for MediaProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Media Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut media_data = (String::default(), String::default());
 
-            'outer: loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            'outer: while thread_alive.load(Relaxed) {
                 if let Ok(Ok(player)) = PlayerFinder::new().map(|x| x.find_active()) {
                     if let Ok(metadata) = player.get_metadata() {
                         media_data = send_media_data(&metadata, &data_sender, &media_data);
@@ -74,7 +65,7 @@ impl Provider for MediaProvider {
                         for event in events {
                             tracing::debug!("{:?}", event);
 
-                            if !is_started.load(Relaxed) {
+                            if !thread_alive.load(Relaxed) {
                                 break 'outer;
                             }
 
@@ -100,9 +91,6 @@ impl Provider for MediaProvider {
 
             tracing::info!("Media Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

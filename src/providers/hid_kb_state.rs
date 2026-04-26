@@ -3,20 +3,16 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use super::_base::Provider;
+use super::_base::{Provider, ProviderHandle};
 use crate::data_type::{DataType, HidKbStateSubtype};
 
 pub struct HidKbStateProvider {
     device_to_host_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl HidKbStateProvider {
     pub fn new(device_to_host_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        Box::new(HidKbStateProvider {
-            device_to_host_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        })
+        Box::new(HidKbStateProvider { device_to_host_sender })
     }
 }
 
@@ -82,7 +78,11 @@ fn parse_data_by_type(data: &[u8]) -> String {
             }
         }
         x if x == DataType::RelayFromDevice as u8 || x == DataType::RelayToDevice as u8 => {
-            let direction = if type_id == DataType::RelayFromDevice as u8 { "FromDevice" } else { "ToDevice" };
+            let direction = if type_id == DataType::RelayFromDevice as u8 {
+                "FromDevice"
+            } else {
+                "ToDevice"
+            };
             if data.len() > 1 {
                 format!("Relay{}: {} bytes of payload", direction, data.len() - 1)
             } else {
@@ -135,20 +135,20 @@ fn parse_data_by_type(data: &[u8]) -> String {
 }
 
 impl Provider for HidKbStateProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("HID KbState Provider started");
-        self.is_started.store(true, Relaxed);
-        let is_started = self.is_started.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let mut hid_subscriber = self.device_to_host_sender.subscribe();
 
         std::thread::spawn(move || {
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 tracing::debug!("HID KbState Provider: waiting for data...");
                 if let Ok(data) = hid_subscriber.blocking_recv() {
+                    // Recheck after recv: stop() may have flipped alive while we were blocked.
+                    if !thread_alive.load(Relaxed) {
+                        break;
+                    }
                     let timestamp = format_timestamp();
                     let type_name = format_data_type(data[0]);
                     let hex_dump = format_hex_dump(&data);
@@ -165,9 +165,6 @@ impl Provider for HidKbStateProvider {
 
             tracing::info!("HID KbState Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

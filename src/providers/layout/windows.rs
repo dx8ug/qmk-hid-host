@@ -13,7 +13,7 @@ use windows::Win32::{
 use crate::config::get_config;
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 unsafe fn get_layout() -> Option<String> {
     let focused_window = GetForegroundWindow();
@@ -38,33 +38,24 @@ fn send_data(value: &String, layouts: &Vec<String>, data_sender: &broadcast::Sen
 
 pub struct LayoutProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl LayoutProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = LayoutProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(LayoutProvider { data_sender });
     }
 }
 
 impl Provider for LayoutProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Layout Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         let layouts = &get_config().layouts;
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut synced_layout = "".to_string();
-            loop {
-                if !is_started.load(Relaxed) {
-                    break;
-                }
-
+            while thread_alive.load(Relaxed) {
                 if let Some(layout) = unsafe { get_layout() } {
                     if synced_layout != layout {
                         synced_layout = layout;
@@ -77,9 +68,6 @@ impl Provider for LayoutProvider {
 
             tracing::info!("Layout Provider stopped");
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }

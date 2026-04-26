@@ -15,7 +15,7 @@ use windows::{
 
 use crate::data_type::DataType;
 
-use super::super::_base::Provider;
+use super::super::_base::{Provider, ProviderHandle};
 
 fn get_volume() -> Result<f32, ()> {
     let endpoint_volume = unsafe { get_volume_endpoint() }.map_err(|e| tracing::error!("Can not get volume endpoint: {}", e));
@@ -51,45 +51,37 @@ fn send_data(value: &f32, push_sender: &broadcast::Sender<Vec<u8>>) {
 
 pub struct VolumeProvider {
     data_sender: broadcast::Sender<Vec<u8>>,
-    is_started: Arc<AtomicBool>,
 }
 
 impl VolumeProvider {
     pub fn new(data_sender: broadcast::Sender<Vec<u8>>) -> Box<dyn Provider> {
-        let provider = VolumeProvider {
-            data_sender,
-            is_started: Arc::new(AtomicBool::new(false)),
-        };
-        return Box::new(provider);
+        return Box::new(VolumeProvider { data_sender });
     }
 }
 
 impl Provider for VolumeProvider {
-    fn start(&self) {
+    fn start(&self) -> ProviderHandle {
         tracing::info!("Volume Provider started");
-        self.is_started.store(true, Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         if let Ok(volume) = get_volume() {
             send_data(&volume, &self.data_sender);
         }
 
         let data_sender = self.data_sender.clone();
-        let is_started = self.is_started.clone();
         std::thread::spawn(move || loop {
-            if subscribe_and_wait(&data_sender, &is_started) {
+            if subscribe_and_wait(&data_sender, &thread_alive) {
                 tracing::info!("Volume Provider stopped");
                 break;
             }
 
             std::thread::sleep(std::time::Duration::from_millis(10000));
         });
-    }
-
-    fn stop(&self) {
-        self.is_started.store(false, Relaxed);
+        ProviderHandle::new(alive)
     }
 }
 
-fn subscribe_and_wait(data_sender: &broadcast::Sender<Vec<u8>>, is_started: &Arc<AtomicBool>) -> bool {
+fn subscribe_and_wait(data_sender: &broadcast::Sender<Vec<u8>>, alive: &Arc<AtomicBool>) -> bool {
     if let Ok(endpoint_volume) = unsafe { get_volume_endpoint() } {
         let push_sender = data_sender.clone();
         let volume_callback: IAudioEndpointVolumeCallback = VolumeChangeCallback { push_sender }.into();
@@ -98,11 +90,7 @@ fn subscribe_and_wait(data_sender: &broadcast::Sender<Vec<u8>>, is_started: &Arc
             return false;
         }
 
-        loop {
-            if !is_started.load(Relaxed) {
-                break;
-            }
-
+        while alive.load(Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
