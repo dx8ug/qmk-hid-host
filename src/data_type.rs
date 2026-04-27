@@ -33,11 +33,6 @@ pub enum DataType {
 }
 
 #[repr(u8)]
-pub enum RelayDataType {
-    Pointing = 10,
-}
-
-#[repr(u8)]
 pub enum HidKbStateSubtype {
     Layer = 1,
     Lang = 2,
