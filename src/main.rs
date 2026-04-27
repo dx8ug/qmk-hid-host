@@ -76,52 +76,34 @@ fn get_providers(
     device_to_host_sender: &broadcast::Sender<Vec<u8>>,
 ) -> Vec<Box<dyn Provider>> {
     let p = &config::get_config().providers;
-    let mut out: Vec<Box<dyn Provider>> = Vec::new();
+    let mut out: Vec<Box<dyn Provider>> = Vec::with_capacity(7);
 
-    if enabled(&p.time) {
-        out.push(TimeProvider::new(host_to_device_sender.clone()));
-        tracing::info!("provider enabled: time");
-    }
-    if enabled(&p.volume) {
-        out.push(VolumeProvider::new(host_to_device_sender.clone()));
-        tracing::info!("provider enabled: volume");
-    }
-    if enabled(&p.layout) {
-        out.push(LayoutProvider::new(host_to_device_sender.clone()));
-        tracing::info!("provider enabled: layout");
-    }
-    if enabled(&p.media) {
-        out.push(MediaProvider::new(host_to_device_sender.clone()));
-        tracing::info!("provider enabled: media");
-    }
-    if enabled(&p.relay) {
-        out.push(RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()));
-        tracing::info!("provider enabled: relay");
-    }
-    if enabled(&p.state) {
-        out.push(StateProvider::new(device_to_host_sender.clone()));
-        tracing::info!("provider enabled: state");
-    }
-
-    #[cfg(target_os = "macos")]
-    if let Some(w) = &p.weather {
-        if w.enabled {
-            out.push(WeatherProvider::new(host_to_device_sender.clone(), w.url.clone()));
-            tracing::info!("provider enabled: weather");
+    let mut try_push = |entry: &Option<config::ProviderEntry>, name: &str, make: &dyn Fn() -> Box<dyn Provider>| {
+        if entry.as_ref().is_none_or(|e| e.enabled) {
+            out.push(make());
+            tracing::info!("provider enabled: {}", name);
         }
+    };
+
+    try_push(&p.time, "time", &|| TimeProvider::new(host_to_device_sender.clone()));
+    try_push(&p.volume, "volume", &|| VolumeProvider::new(host_to_device_sender.clone()));
+    try_push(&p.layout, "layout", &|| LayoutProvider::new(host_to_device_sender.clone()));
+    try_push(&p.media, "media", &|| MediaProvider::new(host_to_device_sender.clone()));
+    try_push(&p.relay, "relay", &|| RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()));
+    try_push(&p.state, "state", &|| StateProvider::new(device_to_host_sender.clone()));
+
+    let weather = p.weather.as_ref().filter(|w| w.enabled);
+    #[cfg(target_os = "macos")]
+    if let Some(w) = weather {
+        out.push(WeatherProvider::new(host_to_device_sender.clone(), w.url.clone()));
+        tracing::info!("provider enabled: weather");
     }
     #[cfg(not(target_os = "macos"))]
-    if let Some(w) = &p.weather {
-        if w.enabled {
-            tracing::warn!("provider 'weather' is macOS-only, ignored");
-        }
+    if weather.is_some() {
+        tracing::warn!("provider 'weather' is macOS-only, ignored");
     }
 
     out
-}
-
-fn enabled(entry: &Option<config::ProviderEntry>) -> bool {
-    entry.as_ref().is_none_or(|e| e.enabled)
 }
 
 #[cfg(not(target_os = "macos"))]
