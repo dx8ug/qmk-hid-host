@@ -1,9 +1,9 @@
-use chrono::Local;
 use std::sync::atomic::Ordering::Relaxed;
 use tokio::sync::broadcast;
 
 use super::_base::{Provider, ProviderHandle};
-use crate::data_type::{DataType, HidKbStateSubtype};
+use crate::data_type::DataType;
+use crate::hid_kb_state::{self, HidKbStateEvent};
 
 pub struct StateProvider {
     device_to_host_sender: broadcast::Sender<Vec<u8>>,
@@ -15,39 +15,33 @@ impl StateProvider {
     }
 }
 
-fn parse_kb_state(data: &[u8]) -> String {
-    if data.len() < 3 {
-        return "Incomplete HidKbState".to_string();
-    }
-    let subtype = data[1];
-    let value = data[2];
-    match subtype {
-        x if x == HidKbStateSubtype::Layer as u8 => format!("Layer={}", value),
-        x if x == HidKbStateSubtype::Lang as u8 => {
-            let s = match value {
+fn format_event(event: HidKbStateEvent) -> String {
+    match event {
+        HidKbStateEvent::Layer(v) => format!("Layer={}", v),
+        HidKbStateEvent::Lang(v) => {
+            let s = match v {
                 0 => "(en)",
                 1 => "(ru)",
                 _ => "(unknown)",
             };
-            format!("Lang={} {}", value, s)
+            format!("Lang={} {}", v, s)
         }
-        x if x == HidKbStateSubtype::MacMode as u8 => {
-            let s = match value {
+        HidKbStateEvent::MacMode(v) => {
+            let s = match v {
                 0 => "(off)",
                 1 => "(on)",
                 _ => "(unknown)",
             };
-            format!("MacMode={} {}", value, s)
+            format!("MacMode={} {}", v, s)
         }
-        x if x == HidKbStateSubtype::RuenLayout as u8 => {
-            let s = match value {
+        HidKbStateEvent::RuenLayout(v) => {
+            let s = match v {
                 0 => "(pc)",
                 1 => "(mac)",
                 _ => "(unknown)",
             };
-            format!("RuenLayout={} {}", value, s)
+            format!("RuenLayout={} {}", v, s)
         }
-        _ => format!("Unknown HidKbState subtype: {}", subtype),
     }
 }
 
@@ -57,8 +51,6 @@ impl Provider for StateProvider {
         let mut hid_subscriber = self.device_to_host_sender.subscribe();
 
         ProviderHandle::spawn(move |alive| {
-            // Poll via try_recv so stop() can wake the thread within IDLE_POLL on the next
-            // alive check, instead of blocking until the next packet arrives.
             const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
             while alive.load(Relaxed) {
                 match hid_subscriber.try_recv() {
@@ -66,11 +58,14 @@ impl Provider for StateProvider {
                         if data.is_empty() || data[0] != DataType::HidKbState as u8 {
                             continue;
                         }
-                        println!(
-                            "[{}] HidKbState: {}",
-                            Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                            parse_kb_state(&data),
-                        );
+                        match hid_kb_state::parse(&data) {
+                            Some(event) => tracing::info!("HidKbState: {}", format_event(event)),
+                            None => tracing::warn!(
+                                "Unrecognised HidKbState frame (len={}, subtype={:#x})",
+                                data.len(),
+                                data.get(1).copied().unwrap_or(0),
+                            ),
+                        }
                     }
                     Err(broadcast::error::TryRecvError::Empty) => std::thread::sleep(IDLE_POLL),
                     Err(broadcast::error::TryRecvError::Lagged(n)) => {

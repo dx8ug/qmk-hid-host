@@ -5,6 +5,7 @@
 
 mod config;
 mod data_type;
+mod hid_kb_state;
 mod keyboard;
 mod providers;
 mod utils;
@@ -15,10 +16,11 @@ use keyboard::Keyboard;
 use providers::weather::WeatherProvider;
 use providers::{
     _base::{Provider, ProviderHandle},
-    state::StateProvider,
     layout::LayoutProvider,
     media::MediaProvider,
     relay::RelayProvider,
+    state::StateProvider,
+    streamdeck::StreamDeckBridge,
     time::TimeProvider,
     volume::VolumeProvider,
 };
@@ -76,7 +78,7 @@ fn get_providers(
     device_to_host_sender: &broadcast::Sender<Vec<u8>>,
 ) -> Vec<Box<dyn Provider>> {
     let p = &config::get_config().providers;
-    let mut out: Vec<Box<dyn Provider>> = Vec::with_capacity(7);
+    let mut out: Vec<Box<dyn Provider>> = Vec::with_capacity(8);
 
     let mut try_push = |entry: &Option<config::ProviderEntry>, name: &str, make: &dyn Fn() -> Box<dyn Provider>| {
         if entry.as_ref().is_none_or(|e| e.enabled) {
@@ -89,7 +91,9 @@ fn get_providers(
     try_push(&p.volume, "volume", &|| VolumeProvider::new(host_to_device_sender.clone()));
     try_push(&p.layout, "layout", &|| LayoutProvider::new(host_to_device_sender.clone()));
     try_push(&p.media, "media", &|| MediaProvider::new(host_to_device_sender.clone()));
-    try_push(&p.relay, "relay", &|| RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone()));
+    try_push(&p.relay, "relay", &|| {
+        RelayProvider::new(host_to_device_sender.clone(), device_to_host_sender.clone())
+    });
     try_push(&p.state, "state", &|| StateProvider::new(device_to_host_sender.clone()));
 
     let weather = p.weather.as_ref().filter(|w| w.enabled);
@@ -101,6 +105,12 @@ fn get_providers(
     #[cfg(not(target_os = "macos"))]
     if weather.is_some() {
         tracing::warn!("provider 'weather' is macOS-only, ignored");
+    }
+
+    let sd = p.streamdeck.as_ref().filter(|s| s.enabled);
+    if let Some(s) = sd {
+        out.push(StreamDeckBridge::new(device_to_host_sender.clone(), s.port));
+        tracing::info!("provider enabled: streamdeck (port={})", s.port);
     }
 
     out

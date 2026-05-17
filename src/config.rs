@@ -17,6 +17,8 @@ pub struct Providers {
     pub state: Option<ProviderEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weather: Option<WeatherEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streamdeck: Option<StreamDeckEntry>,
 }
 
 #[derive(PartialEq, serde::Deserialize, serde::Serialize)]
@@ -36,6 +38,19 @@ pub struct WeatherEntry {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StreamDeckEntry {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_streamdeck_port")]
+    pub port: u16,
+}
+
+fn default_streamdeck_port() -> u16 {
+    6543
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -182,6 +197,34 @@ mod tests {
         }"#;
         let err = serde_json::from_str::<Config>(json);
         assert!(err.is_err(), "old top-level 'weather' must be rejected by deny_unknown_fields");
+    }
+
+    #[test]
+    fn streamdeck_enabled_defaults_to_false() {
+        let p: Providers = serde_json::from_str(r#"{"streamdeck": {}}"#).unwrap();
+        let s = p.streamdeck.unwrap();
+        assert!(!s.enabled);
+        assert_eq!(s.port, 6543);
+    }
+
+    #[test]
+    fn streamdeck_custom_port() {
+        let p: Providers = serde_json::from_str(r#"{"streamdeck": {"enabled": true, "port": 12000}}"#).unwrap();
+        let s = p.streamdeck.unwrap();
+        assert!(s.enabled);
+        assert_eq!(s.port, 12000);
+    }
+
+    #[test]
+    fn streamdeck_unknown_field_rejected() {
+        let err = serde_json::from_str::<Providers>(r#"{"streamdeck": {"prt": 1234}}"#);
+        assert!(err.is_err(), "misspelled 'prt' must be rejected");
+    }
+
+    #[test]
+    fn streamdeck_bind_field_rejected() {
+        let err = serde_json::from_str::<Providers>(r#"{"streamdeck": {"bind": "0.0.0.0"}}"#);
+        assert!(err.is_err(), "legacy 'bind' field must be rejected — bridge is loopback-only");
     }
 
     #[test]
