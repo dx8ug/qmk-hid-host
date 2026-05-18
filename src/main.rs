@@ -53,7 +53,7 @@ fn build_log_filter(config_level: Option<&str>) -> tracing_subscriber::EnvFilter
 }
 
 fn install_subscriber(filter: tracing_subscriber::EnvFilter) {
-    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    let subscriber = tracing_subscriber::fmt().with_ansi(false).with_env_filter(filter).finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
