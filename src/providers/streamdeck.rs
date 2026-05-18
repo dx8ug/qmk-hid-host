@@ -13,7 +13,7 @@ use super::_base::{Provider, ProviderHandle};
 use crate::data_type::DataType;
 use crate::hid_kb_state::{self, HidKbStateEvent};
 
-const HELLO_FRAME: &str = r#"{"type":"hello","protocol":1,"host":"qmk-hid-host"}"#;
+const HELLO_FRAME: &str = r#"{"type":"hello","protocol":2,"host":"qmk-hid-host"}"#;
 
 // Bridge is loopback-only by design: it broadcasts keyboard state without
 // authentication, and the data is only intended for a local Stream Deck plugin.
@@ -58,19 +58,21 @@ fn subtype_key(event: HidKbStateEvent) -> (&'static str, u8) {
     }
 }
 
-fn label_for(event: HidKbStateEvent) -> Option<&'static str> {
-    match event {
-        HidKbStateEvent::Layer(_) => None,
-        HidKbStateEvent::Lang(0) => Some("en"),
-        HidKbStateEvent::Lang(1) => Some("ru"),
-        HidKbStateEvent::Lang(_) => None,
-        HidKbStateEvent::MacMode(0) => Some("off"),
-        HidKbStateEvent::MacMode(1) => Some("on"),
-        HidKbStateEvent::MacMode(_) => None,
-        HidKbStateEvent::RuenLayout(0) => Some("pc"),
-        HidKbStateEvent::RuenLayout(1) => Some("mac"),
-        HidKbStateEvent::RuenLayout(_) => None,
+fn label_for_key(key: &str, raw: u8) -> Option<&'static str> {
+    match (key, raw) {
+        ("lang", 0) => Some("en"),
+        ("lang", 1) => Some("ru"),
+        ("macMode", 0) => Some("off"),
+        ("macMode", 1) => Some("on"),
+        ("ruenLayout", 0) => Some("pc"),
+        ("ruenLayout", 1) => Some("mac"),
+        _ => None,
     }
+}
+
+fn label_for(event: HidKbStateEvent) -> Option<&'static str> {
+    let (key, raw) = subtype_key(event);
+    label_for_key(key, raw)
 }
 
 fn state_frame(event: HidKbStateEvent) -> String {
@@ -104,7 +106,13 @@ async fn bind_with_retry(addr_str: &str, alive: &Arc<AtomicBool>) -> std::io::Re
 fn snapshot_frame(map: &HashMap<&'static str, u8>) -> String {
     let mut pairs: Vec<(&'static str, u8)> = map.iter().map(|(k, v)| (*k, *v)).collect();
     pairs.sort_by_key(|(k, _)| *k);
-    let parts: Vec<String> = pairs.iter().map(|(k, v)| format!(r#""{}":{}"#, k, v)).collect();
+    let parts: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| match label_for_key(k, *v) {
+            Some(label) => format!(r#""{}":{{"raw":{},"label":"{}"}}"#, k, v, label),
+            None => format!(r#""{}":{{"raw":{}}}"#, k, v),
+        })
+        .collect();
     format!(r#"{{"type":"snapshot","values":{{{}}}}}"#, parts.join(","))
 }
 
@@ -355,8 +363,8 @@ mod tests {
             other => panic!("expected text, got {:?}", other),
         };
         assert!(text.contains(r#""type":"snapshot""#), "got: {}", text);
-        assert!(text.contains(r#""layer":2"#), "got: {}", text);
-        assert!(text.contains(r#""lang":1"#), "got: {}", text);
+        assert!(text.contains(r#""layer":{"raw":2}"#), "got: {}", text);
+        assert!(text.contains(r#""lang":{"raw":1,"label":"ru"}"#), "got: {}", text);
 
         let _ = ws.close(None).await;
         handle.stop();
@@ -421,6 +429,36 @@ mod tests {
         assert!(!f.contains("\"label\""), "got: {}", f);
     }
 
+    #[test]
+    fn snapshot_frame_serializes_entries_with_labels() {
+        let mut map: HashMap<&'static str, u8> = HashMap::new();
+        map.insert("layer", 2);
+        map.insert("lang", 1);
+        map.insert("macMode", 0);
+        let f = snapshot_frame(&map);
+        assert!(f.starts_with(r#"{"type":"snapshot","values":{"#), "got: {}", f);
+        assert!(f.contains(r#""layer":{"raw":2}"#), "got: {}", f);
+        assert!(f.contains(r#""lang":{"raw":1,"label":"ru"}"#), "got: {}", f);
+        assert!(f.contains(r#""macMode":{"raw":0,"label":"off"}"#), "got: {}", f);
+    }
+
+    #[test]
+    fn snapshot_frame_omits_label_for_unknown_raw() {
+        let mut map: HashMap<&'static str, u8> = HashMap::new();
+        map.insert("lang", 42);
+        let f = snapshot_frame(&map);
+        assert!(f.contains(r#""lang":{"raw":42}"#), "got: {}", f);
+        assert!(!f.contains(r#""label""#), "label must be omitted, got: {}", f);
+    }
+
+    #[test]
+    fn snapshot_frame_empty_map() {
+        let map: HashMap<&'static str, u8> = HashMap::new();
+        let f = snapshot_frame(&map);
+        assert!(f.contains(r#""type":"snapshot""#), "got: {}", f);
+        assert!(f.contains(r#""values":{}"#), "got: {}", f);
+    }
+
     #[tokio::test]
     async fn port_in_use_does_not_panic() {
         // Hold a listener on a port, then try to bind the provider on the same port.
@@ -475,7 +513,7 @@ mod tests {
             other => panic!("expected text, got {:?}", other),
         };
         assert!(text.contains(r#""type":"hello""#), "got: {}", text);
-        assert!(text.contains(r#""protocol":1"#), "got: {}", text);
+        assert!(text.contains(r#""protocol":2"#), "got: {}", text);
 
         let _ = ws.close(None).await;
         handle.stop();

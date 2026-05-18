@@ -10,7 +10,10 @@ use crate::data_type::DataType;
 
 const HELLO_INTERVAL: Duration = Duration::from_secs(30);
 const HELLO_PROTOCOL_VERSION: u8 = 0x01;
-const HELLO_PACKET: [u8; 2] = [DataType::HidHello as u8, HELLO_PROTOCOL_VERSION];
+const HELLO_FLAG_INITIAL: u8 = 0x01;
+const HELLO_FLAG_PING: u8 = 0x00;
+const HELLO_PACKET_INITIAL: [u8; 3] = [DataType::HidHello as u8, HELLO_PROTOCOL_VERSION, HELLO_FLAG_INITIAL];
+const HELLO_PACKET_PING: [u8; 3] = [DataType::HidHello as u8, HELLO_PROTOCOL_VERSION, HELLO_FLAG_PING];
 
 pub struct Keyboard {
     name: String,
@@ -104,9 +107,17 @@ impl Keyboard {
 
                     // Send immediate HELLO synchronously, before providers can race ahead.
                     // Guarantees HELLO is the first packet queued for the writer thread.
-                    match host_to_device_sender.send(HELLO_PACKET.to_vec()) {
-                        Ok(_) => tracing::debug!("{}: HELLO sent", name),
-                        Err(e) => tracing::warn!("{}: HELLO send failed: {:?}", name, e),
+                    // Initial-flavored: firmware triggers a full state resync on this.
+                    // If send fails, the writer thread has not subscribed yet — bail without
+                    // flipping is_connected, so providers don't start blasting state at a
+                    // firmware that never saw INITIAL and would silently miss the resync.
+                    match host_to_device_sender.send(HELLO_PACKET_INITIAL.to_vec()) {
+                        Ok(_) => tracing::debug!("{}: HELLO (initial) sent", name),
+                        Err(e) => {
+                            tracing::error!("{}: HELLO send failed, aborting connect cycle: {:?}", name, e);
+                            write_alive.store(false, Relaxed);
+                            continue;
+                        }
                     }
 
                     is_connected.store(true, Relaxed);
@@ -204,12 +215,13 @@ fn start_hello_pinger(name: &String, pinger_alive: &Arc<AtomicBool>, host_to_dev
 
     std::thread::spawn(move || {
         // Immediate HELLO is sent synchronously by connect(); this thread sends only periodic PINGs.
+        // Ping-flavored: firmware refreshes its activity timeout but does not resync state.
         loop {
             std::thread::sleep(HELLO_INTERVAL);
             if !pinger_alive.load(Relaxed) {
                 break;
             }
-            if let Err(e) = sender.send(HELLO_PACKET.to_vec()) {
+            if let Err(e) = sender.send(HELLO_PACKET_PING.to_vec()) {
                 tracing::error!("{}: hello ping send failed: {:?}", name, e);
                 break;
             }
