@@ -60,6 +60,8 @@ pub struct Config {
     pub layouts: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconnect_delay: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<String>,
     #[serde(default, skip_serializing_if = "providers_is_empty")]
     pub providers: Providers,
 }
@@ -104,21 +106,19 @@ pub fn load_config(path: PathBuf) -> &'static Config {
         }],
         layouts: vec!["en".to_string()],
         reconnect_delay: None,
+        log_level: None,
         providers: Providers::default(),
     };
 
+    // load_config runs before tracing is initialised (level comes from this very config),
+    // so failures here panic with the full error in the panic message rather than going through tracing.
     if let Ok(file) = std::fs::read_to_string(&path) {
-        let config = serde_json::from_str::<Config>(&file)
-            .map_err(|e| tracing::error!("Incorrect config file: {}", e))
-            .unwrap();
+        let config = serde_json::from_str::<Config>(&file).unwrap_or_else(|e| panic!("Incorrect config file {:?}: {}", path, e));
         return CONFIG.get_or_init(|| config);
     }
 
-    let file_content = serde_json::to_string_pretty(&default_config).unwrap();
-    std::fs::write(&path, &file_content)
-        .map_err(|e| tracing::error!("Error while saving config file to {:?}: {}", path, e))
-        .unwrap();
-    tracing::info!("New config file created at {:?}", path);
+    let file_content = serde_json::to_string_pretty(&default_config).expect("Failed to serialize default config");
+    std::fs::write(&path, &file_content).unwrap_or_else(|e| panic!("Error while saving config file to {:?}: {}", path, e));
 
     CONFIG.get_or_init(|| default_config)
 }
@@ -225,6 +225,27 @@ mod tests {
     fn streamdeck_bind_field_rejected() {
         let err = serde_json::from_str::<Providers>(r#"{"streamdeck": {"bind": "0.0.0.0"}}"#);
         assert!(err.is_err(), "legacy 'bind' field must be rejected — bridge is loopback-only");
+    }
+
+    #[test]
+    fn log_level_field_parses() {
+        let json = r#"{
+            "devices": [{"vendorId": "0x0001", "productId": "0x0002"}],
+            "layouts": [],
+            "logLevel": "warn"
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.log_level.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn log_level_absent_is_none() {
+        let json = r#"{
+            "devices": [{"vendorId": "0x0001", "productId": "0x0002"}],
+            "layouts": []
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(cfg.log_level.is_none());
     }
 
     #[test]

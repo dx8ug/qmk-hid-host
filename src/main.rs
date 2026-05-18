@@ -42,12 +42,37 @@ struct Args {
     print_hids: bool,
 }
 
+/// `logLevel` from config → that directive; otherwise INFO. Malformed directive → startup panic.
+fn build_log_filter(config_level: Option<&str>) -> tracing_subscriber::EnvFilter {
+    use tracing_subscriber::EnvFilter;
+
+    match config_level {
+        Some(level) => EnvFilter::try_new(level).unwrap_or_else(|e| panic!("Invalid logLevel '{}' in config: {}", level, e)),
+        None => EnvFilter::new("info"),
+    }
+}
+
+fn install_subscriber(filter: tracing_subscriber::EnvFilter) {
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
 fn main() {
-    let env_filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-        .from_env_lossy();
-    let tracing_subscriber = tracing_subscriber::fmt().with_env_filter(env_filter).finish();
-    let _ = tracing::subscriber::set_global_default(tracing_subscriber);
+    let args = Args::parse();
+
+    if args.print_hids {
+        install_subscriber(build_log_filter(None));
+        return print_unique_hid_devices();
+    }
+
+    let config_path = args.config.unwrap_or("./qmk-hid-host.json".into());
+    let was_missing = !config_path.exists();
+    let config = load_config(config_path.clone());
+
+    install_subscriber(build_log_filter(config.log_level.as_deref()));
+    if was_missing {
+        tracing::info!("New config file created at {:?}", config_path);
+    }
 
     let (is_connected_sender, is_connected_receiver) = mpsc::channel::<bool>(1);
     // Capacity 16: cushion for restart-cycle bursts (HELLO + immediate state from
@@ -55,12 +80,6 @@ fn main() {
     // start_write/relay/state — too small ⇒ silent packet loss.
     let (host_to_device_sender, _) = broadcast::channel::<Vec<u8>>(16);
     let (device_to_host_sender, _) = broadcast::channel::<Vec<u8>>(16);
-
-    let args = Args::parse();
-    if args.print_hids {
-        return print_unique_hid_devices();
-    }
-    let config = load_config(args.config.unwrap_or("./qmk-hid-host.json".into()));
     let reconnect_delay = config.reconnect_delay.unwrap_or(5000);
     for device in &config.devices {
         let host_to_device_sender = host_to_device_sender.clone();
@@ -168,5 +187,32 @@ fn start(
                 handles = providers.iter().map(|p| p.start()).collect();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_log_filter;
+
+    #[test]
+    fn defaults_to_info_when_config_unset() {
+        assert_eq!(build_log_filter(None).to_string(), "info");
+    }
+
+    #[test]
+    fn config_level_is_used() {
+        assert_eq!(build_log_filter(Some("warn")).to_string(), "warn");
+    }
+
+    #[test]
+    fn target_directive_parses() {
+        // tracing_subscriber renders directives normalised; just assert parse succeeded.
+        assert!(!build_log_filter(Some("qmk_hid_host=warn,hidapi=off")).to_string().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid logLevel")]
+    fn malformed_config_panics() {
+        build_log_filter(Some("warn=bogus"));
     }
 }
