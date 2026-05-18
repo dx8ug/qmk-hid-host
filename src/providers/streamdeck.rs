@@ -300,7 +300,7 @@ async fn handle_client(stream: TcpStream, peer: std::net::SocketAddr, snap_text:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::Message;
 
